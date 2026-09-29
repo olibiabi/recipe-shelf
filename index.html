@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A shared AI-illustrated recipe shelf that grows over time.">
+  <title>Recipe Shelf</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Patrick+Hand&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=10">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">A growing community cookbook</p>
+        <h1>Recipe Shelf</h1>
+      </div>
+      <div class="header-actions">
+        <p id="storage-status" class="storage-status">Checking the shelf…</p>
+        <button id="toggle-rating" class="rating-button" type="button" aria-pressed="false">
+          <span class="button-star" aria-hidden="true"></span>
+          <span class="rating-button-label">Add a star</span>
+        </button>
+        <button id="open-form" class="primary-button" type="button">Share a recipe</button>
+      </div>
+    </header>
+
+    <section class="shelf-room" aria-label="Shared recipe shelf">
+      <div class="paper-grain" aria-hidden="true"></div>
+      <p id="rating-hint" class="rating-hint" aria-live="polite">Choose a recipe, then click or drag to place your star nearby.</p>
+      <div id="empty-state" class="empty-state hidden">
+        <span class="empty-plate" aria-hidden="true"></span>
+        <p>The shelf is waiting for its first recipe.</p>
+      </div>
+      <div id="shelf-list" class="shelf-list" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="recipe-form-dialog" class="paper-dialog form-dialog">
+    <form id="recipe-form" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Add something delicious</p>
+          <h2>Share a recipe</h2>
+        </div>
+        <button class="icon-button" data-close-form type="button" aria-label="Close">×</button>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          <span>Your name</span>
+          <input id="author-input" name="author" maxlength="32" placeholder="Olivia" required>
+        </label>
+        <label>
+          <span>Dish name</span>
+          <input id="title-input" name="title" maxlength="60" placeholder="Tomato pasta" required>
+        </label>
+      </div>
+
+      <fieldset class="dish-picker">
+        <legend>Choose a dish</legend>
+        <div class="dish-options">
+          <label class="dish-option">
+            <input type="radio" name="dishType" value="blue-bowl" checked>
+            <span class="mini-dish blue-bowl" aria-hidden="true"></span>
+            <span>Blue bowl</span>
+          </label>
+          <label class="dish-option">
+            <input type="radio" name="dishType" value="pink-plate">
+            <span class="mini-dish pink-plate" aria-hidden="true"></span>
+            <span>Pink plate</span>
+          </label>
+          <label class="dish-option">
+            <input type="radio" name="dishType" value="green-bowl">
+            <span class="mini-dish green-bowl" aria-hidden="true"></span>
+            <span>Green bowl</span>
+          </label>
+          <label class="dish-option">
+            <input type="radio" name="dishType" value="check-plate">
+            <span class="mini-dish check-plate" aria-hidden="true"></span>
+            <span>Check plate</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <label>
+        <span>Ingredients</span>
+        <textarea id="ingredients-input" name="ingredients" rows="4" placeholder="200g pasta&#10;2 tomatoes&#10;olive oil" required></textarea>
+      </label>
+
+      <label>
+        <span>How to make it</span>
+        <textarea id="instructions-input" name="instructions" rows="5" placeholder="Boil the pasta, then…" required></textarea>
+      </label>
+
+      <div class="form-footer">
+        <p id="form-message" class="form-message">AI will paint the food for your chosen dish.</p>
+        <button id="submit-recipe" class="primary-button" type="submit">Place it on the shelf</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="recipe-detail-dialog" class="paper-dialog detail-dialog">
+    <button class="icon-button detail-close" data-close-detail type="button" aria-label="Close">×</button>
+    <article class="detail-layout">
+      <section class="recipe-copy">
+        <p id="detail-meta" class="eyebrow"></p>
+        <h2 id="detail-title"></h2>
+        <h3>Ingredients</h3>
+        <ul id="detail-ingredients"></ul>
+        <h3>How to make it</h3>
+        <div id="detail-instructions" class="instruction-copy"></div>
+      </section>
+      <section class="detail-art" aria-label="Food illustration">
+        <div id="detail-dish" class="dish-frame large-dish">
+          <div class="food-window"><img id="detail-image" alt=""></div>
+          <div class="dish-rim" aria-hidden="true"></div>
+        </div>
+      </section>
+    </article>
+  </dialog>
+
+  <template id="recipe-card-template">
+    <article class="recipe-card">
+      <button class="recipe-open" type="button">
+        <div class="dish-frame">
+          <div class="food-window"><img class="recipe-image" alt=""></div>
+          <div class="dish-rim" aria-hidden="true"></div>
+        </div>
+        <span class="recipe-label">
+          <strong class="recipe-title"></strong>
+          <small class="recipe-byline"></small>
+        </span>
+      </button>
+      <div class="rating-zone" aria-hidden="true"></div>
+    </article>
+  </template>
+
+  <script src="firebase-config.js?v=11"></script>
+  <script defer src="script.js?v=11"></script>
+</body>
+</html>
