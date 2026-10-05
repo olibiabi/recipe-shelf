@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Patrick+Hand&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
   <main class="app-shell">
@@ -19,6 +19,10 @@
       </div>
       <div class="header-actions">
         <p id="storage-status" class="storage-status">Checking the shelf…</p>
+        <button id="identity-button" class="identity-button" type="button">
+          <span class="identity-caption">Cooking as</span>
+          <span id="identity-name">Set your name</span>
+        </button>
         <button id="toggle-rating" class="rating-button" type="button" aria-pressed="false">
           <span class="button-star" aria-hidden="true"></span>
           <span class="rating-button-label">Add a star</span>
@@ -29,14 +33,60 @@
 
     <section class="shelf-room" aria-label="Shared recipe shelf">
       <div class="paper-grain" aria-hidden="true"></div>
+      <section class="recipe-discovery" aria-label="Find recipes">
+        <label class="recipe-search">
+          <span class="visually-hidden">Search recipes</span>
+          <input id="recipe-search" type="search" placeholder="Find a recipe, ingredient, or cook…">
+        </label>
+        <div id="category-filters" class="category-filters" aria-label="Recipe categories">
+          <button type="button" data-category="all" aria-pressed="true">All</button>
+          <button type="button" data-category="main" aria-pressed="false">Mains</button>
+          <button type="button" data-category="sweet" aria-pressed="false">Sweets</button>
+          <button type="button" data-category="drink" aria-pressed="false">Drinks</button>
+          <button type="button" data-category="snack" aria-pressed="false">Snacks</button>
+          <button type="button" data-category="other" aria-pressed="false">Other</button>
+        </div>
+        <label class="sort-control">
+          <span>Arrange by</span>
+          <select id="recipe-sort">
+            <option value="newest">Newest</option>
+            <option value="most-made">Most made</option>
+          </select>
+        </label>
+      </section>
       <p id="rating-hint" class="rating-hint" aria-live="polite">Choose a recipe, then click or drag to place your star nearby.</p>
       <div id="empty-state" class="empty-state hidden">
         <span class="empty-plate" aria-hidden="true"></span>
-        <p>The shelf is waiting for its first recipe.</p>
+        <p id="empty-message">The shelf is waiting for its first recipe.</p>
       </div>
       <div id="shelf-list" class="shelf-list" aria-live="polite"></div>
+      <div class="shelf-footer">
+        <p id="recipe-count" class="recipe-count"></p>
+        <button id="load-more" class="load-more-button hidden" type="button">Add another shelf</button>
+      </div>
     </section>
   </main>
+
+  <dialog id="identity-dialog" class="paper-dialog identity-dialog">
+    <form id="identity-form" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Your place at the table</p>
+          <h2>What should we call you?</h2>
+        </div>
+        <button class="icon-button" data-close-identity type="button" aria-label="Close">×</button>
+      </div>
+      <label>
+        <span>Your name</span>
+        <input id="identity-input" name="identity" maxlength="32" placeholder="Olivia" required>
+      </label>
+      <p class="identity-note">This name will appear on the recipes and stars you share. You can change it later.</p>
+      <div class="form-footer identity-footer">
+        <span></span>
+        <button class="primary-button" type="submit">Keep this name</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="recipe-form-dialog" class="paper-dialog form-dialog">
     <form id="recipe-form" method="dialog">
@@ -85,6 +135,22 @@
         </div>
       </fieldset>
 
+      <fieldset class="recipe-category-picker">
+        <legend>What kind of recipe is it?</legend>
+        <div class="recipe-category-options">
+          <label><input type="radio" name="category" value="main" checked><span>Main</span></label>
+          <label><input type="radio" name="category" value="sweet"><span>Sweet</span></label>
+          <label><input type="radio" name="category" value="drink"><span>Drink</span></label>
+          <label><input type="radio" name="category" value="snack"><span>Snack</span></label>
+          <label><input type="radio" name="category" value="other"><span>Other</span></label>
+        </div>
+      </fieldset>
+
+      <label>
+        <span>The story behind this dish <em>(optional)</em></span>
+        <textarea id="story-input" name="story" rows="3" maxlength="700" placeholder="A memory, a person, or a moment connected to this food…"></textarea>
+      </label>
+
       <label>
         <span>Ingredients</span>
         <textarea id="ingredients-input" name="ingredients" rows="4" placeholder="200g pasta&#10;2 tomatoes&#10;olive oil" required></textarea>
@@ -108,10 +174,17 @@
       <section class="recipe-copy">
         <p id="detail-meta" class="eyebrow"></p>
         <h2 id="detail-title"></h2>
+        <section id="detail-story-section" class="detail-story" hidden>
+          <p class="eyebrow">The story behind this dish</p>
+          <p id="detail-story"></p>
+        </section>
         <h3>Ingredients</h3>
         <ul id="detail-ingredients"></ul>
         <h3>How to make it</h3>
         <div id="detail-instructions" class="instruction-copy"></div>
+        <div id="owner-actions" class="owner-actions" hidden>
+          <button id="delete-recipe" class="quiet-danger-button" type="button">Remove my recipe</button>
+        </div>
       </section>
       <section class="detail-art" aria-label="Food illustration">
         <div id="detail-dish" class="dish-frame large-dish">
@@ -139,6 +212,6 @@
   </template>
 
   <script src="firebase-config.js?v=11"></script>
-  <script defer src="script.js?v=11"></script>
+  <script defer src="script.js?v=14"></script>
 </body>
 </html>

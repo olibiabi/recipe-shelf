@@ -4,6 +4,7 @@ const LOCAL_STORAGE_KEY = "recipe-shelf-recipes-v1";
 const AUTHOR_STORAGE_KEY = "recipe-shelf-author";
 const USER_STORAGE_KEY = "recipe-shelf-person-id";
 const ROW_SIZE = 4;
+const INITIAL_VISIBLE_ROWS = 3;
 const firebaseConfig = window.recipeShelfFirebaseConfig || {};
 const BACKDROP_PATTERNS = ["pattern-lines", "pattern-grid", "pattern-dots"];
 const BACKDROP_PALETTES = [
@@ -30,13 +31,30 @@ const state = {
   recipesRef: null,
   firebase: null,
   ratingMode: false,
+  pendingRatingMode: false,
   personId: getOrCreatePersonId(),
+  activeRecipeId: null,
+  searchQuery: "",
+  category: "all",
+  sort: "newest",
+  visibleRows: INITIAL_VISIBLE_ROWS,
   isSaving: false
 };
 
 const shelfList = document.getElementById("shelf-list");
 const emptyState = document.getElementById("empty-state");
+const emptyMessage = document.getElementById("empty-message");
+const recipeSearch = document.getElementById("recipe-search");
+const categoryFilters = document.getElementById("category-filters");
+const recipeSort = document.getElementById("recipe-sort");
+const recipeCount = document.getElementById("recipe-count");
+const loadMoreButton = document.getElementById("load-more");
 const storageStatus = document.getElementById("storage-status");
+const identityButton = document.getElementById("identity-button");
+const identityName = document.getElementById("identity-name");
+const identityDialog = document.getElementById("identity-dialog");
+const identityForm = document.getElementById("identity-form");
+const identityInput = document.getElementById("identity-input");
 const ratingButton = document.getElementById("toggle-rating");
 const ratingButtonLabel = ratingButton.querySelector(".rating-button-label");
 const ratingHint = document.getElementById("rating-hint");
@@ -45,6 +63,7 @@ const formDialog = document.getElementById("recipe-form-dialog");
 const form = document.getElementById("recipe-form");
 const authorInput = document.getElementById("author-input");
 const titleInput = document.getElementById("title-input");
+const storyInput = document.getElementById("story-input");
 const ingredientsInput = document.getElementById("ingredients-input");
 const instructionsInput = document.getElementById("instructions-input");
 const submitButton = document.getElementById("submit-recipe");
@@ -52,8 +71,12 @@ const formMessage = document.getElementById("form-message");
 const detailDialog = document.getElementById("recipe-detail-dialog");
 const detailMeta = document.getElementById("detail-meta");
 const detailTitle = document.getElementById("detail-title");
+const detailStorySection = document.getElementById("detail-story-section");
+const detailStory = document.getElementById("detail-story");
 const detailIngredients = document.getElementById("detail-ingredients");
 const detailInstructions = document.getElementById("detail-instructions");
+const ownerActions = document.getElementById("owner-actions");
+const deleteRecipeButton = document.getElementById("delete-recipe");
 const recipeCopy = document.querySelector(".recipe-copy");
 const detailArt = document.querySelector(".detail-art");
 const detailDish = document.getElementById("detail-dish");
@@ -64,15 +87,24 @@ init();
 
 async function init() {
   bindEvents();
-  authorInput.value = localStorage.getItem(AUTHOR_STORAGE_KEY) || "";
+  authorInput.value = getSavedAuthor();
+  updateIdentityUI();
   await connectDataLayer();
 }
 
 function bindEvents() {
   openFormButton.addEventListener("click", () => formDialog.showModal());
-  ratingButton.addEventListener("click", toggleRatingMode);
+  identityButton.addEventListener("click", openIdentityDialog);
+  identityForm.addEventListener("submit", saveIdentity);
+  recipeSearch.addEventListener("input", updateSearch);
+  categoryFilters.addEventListener("click", updateCategory);
+  recipeSort.addEventListener("change", updateSort);
+  loadMoreButton.addEventListener("click", loadMoreRecipes);
+  ratingButton.addEventListener("click", requestRatingMode);
+  document.querySelector("[data-close-identity]").addEventListener("click", closeIdentityDialog);
   document.querySelector("[data-close-form]").addEventListener("click", () => formDialog.close());
   document.querySelector("[data-close-detail]").addEventListener("click", () => detailDialog.close());
+  deleteRecipeButton.addEventListener("click", deleteActiveRecipe);
   form.addEventListener("submit", handleSubmit);
   detailArt.addEventListener("wheel", event => {
     if (recipeCopy.scrollHeight <= recipeCopy.clientHeight) return;
@@ -80,11 +112,82 @@ function bindEvents() {
     recipeCopy.scrollTop += event.deltaY;
   }, { passive: false });
 
-  for (const dialog of [formDialog, detailDialog]) {
+  for (const dialog of [identityDialog, formDialog, detailDialog]) {
     dialog.addEventListener("click", event => {
-      if (event.target === dialog) dialog.close();
+      if (event.target !== dialog) return;
+      if (dialog === identityDialog) closeIdentityDialog();
+      else dialog.close();
     });
   }
+}
+
+function updateSearch() {
+  state.searchQuery = recipeSearch.value.trim().toLowerCase();
+  state.visibleRows = INITIAL_VISIBLE_ROWS;
+  renderShelf();
+}
+
+function updateCategory(event) {
+  const button = event.target.closest("button[data-category]");
+  if (!button) return;
+  state.category = button.dataset.category;
+  state.visibleRows = INITIAL_VISIBLE_ROWS;
+  categoryFilters.querySelectorAll("button[data-category]").forEach(item => {
+    item.setAttribute("aria-pressed", String(item === button));
+  });
+  renderShelf();
+}
+
+function updateSort() {
+  state.sort = recipeSort.value;
+  state.visibleRows = INITIAL_VISIBLE_ROWS;
+  renderShelf();
+}
+
+function loadMoreRecipes() {
+  state.visibleRows += 2;
+  renderShelf();
+}
+
+function openIdentityDialog() {
+  identityInput.value = getSavedAuthor();
+  identityDialog.showModal();
+  identityInput.focus();
+}
+
+function closeIdentityDialog() {
+  state.pendingRatingMode = false;
+  identityDialog.close();
+}
+
+function saveIdentity(event) {
+  event.preventDefault();
+  const name = identityInput.value.trim();
+  if (!name) return;
+  localStorage.setItem(AUTHOR_STORAGE_KEY, name);
+  authorInput.value = name;
+  updateIdentityUI();
+  identityDialog.close();
+  if (state.pendingRatingMode) {
+    state.pendingRatingMode = false;
+    toggleRatingMode();
+  }
+}
+
+function updateIdentityUI() {
+  const name = getSavedAuthor();
+  identityName.textContent = name || "Set your name";
+  identityButton.classList.toggle("has-name", Boolean(name));
+  identityButton.setAttribute("aria-label", name ? `Cooking as ${name}. Change name` : "Set your cook name");
+}
+
+function requestRatingMode() {
+  if (!state.ratingMode && !getSavedAuthor()) {
+    state.pendingRatingMode = true;
+    openIdentityDialog();
+    return;
+  }
+  toggleRatingMode();
 }
 
 function toggleRatingMode() {
@@ -150,20 +253,26 @@ async function handleSubmit(event) {
 
   const author = authorInput.value.trim();
   const title = titleInput.value.trim();
+  const story = storyInput.value.trim();
   const ingredients = splitLines(ingredientsInput.value);
   const instructions = instructionsInput.value.trim();
   const dishType = new FormData(form).get("dishType") || "blue-bowl";
+  const category = new FormData(form).get("category") || "other";
 
   if (!author || !title || ingredients.length === 0 || !instructions) return;
 
   setSaving(true, "Painting your food…");
   localStorage.setItem(AUTHOR_STORAGE_KEY, author);
+  updateIdentityUI();
 
   try {
     const image = await generateFoodIllustration({ title, ingredients });
     const recipe = {
       author,
+      ownerId: state.personId,
       title,
+      story,
+      category,
       ingredients,
       instructions,
       dishType,
@@ -176,6 +285,7 @@ async function handleSubmit(event) {
     form.reset();
     authorInput.value = author;
     form.querySelector('input[value="blue-bowl"]').checked = true;
+    form.querySelector('input[name="category"][value="main"]').checked = true;
     formDialog.close();
   } catch (error) {
     console.error(error);
@@ -273,21 +383,71 @@ function createFallbackFood(title) {
 }
 
 function renderShelf() {
-  const recipes = [...state.recipes].sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  const recipes = state.recipes
+    .filter(recipeMatchesCurrentView)
+    .sort(compareRecipes);
+  const visibleLimit = state.visibleRows * ROW_SIZE;
+  const visibleRecipes = recipes.slice(0, visibleLimit);
   shelfList.innerHTML = "";
   emptyState.classList.toggle("hidden", recipes.length > 0);
+  emptyMessage.textContent = state.recipes.length === 0
+    ? "The shelf is waiting for its first recipe."
+    : "No recipes match this little note yet.";
+  recipeCount.textContent = recipes.length === 0
+    ? ""
+    : `Showing ${visibleRecipes.length} of ${recipes.length} ${recipes.length === 1 ? "recipe" : "recipes"}`;
+  loadMoreButton.classList.toggle("hidden", recipes.length <= visibleLimit);
 
-  const rowCount = Math.max(3, Math.ceil(recipes.length / ROW_SIZE));
+  const rowCount = Math.max(3, Math.ceil(visibleRecipes.length / ROW_SIZE));
   for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
     const index = rowIndex * ROW_SIZE;
     const row = document.createElement("section");
     row.className = "shelf-row";
     row.setAttribute("aria-label", `Shelf ${rowIndex + 1}`);
-    recipes.slice(index, index + ROW_SIZE).forEach((recipe, localIndex) => {
+    visibleRecipes.slice(index, index + ROW_SIZE).forEach((recipe, localIndex) => {
       row.appendChild(createRecipeCard(recipe, index + localIndex));
     });
     shelfList.appendChild(row);
   }
+}
+
+function recipeMatchesCurrentView(recipe) {
+  const categoryMatches = state.category === "all" || getRecipeCategory(recipe) === state.category;
+  if (!categoryMatches) return false;
+  if (!state.searchQuery) return true;
+  const searchableText = [
+    recipe.title,
+    recipe.author,
+    recipe.story,
+    ...(Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
+  ].filter(Boolean).join(" ").toLowerCase();
+  return searchableText.includes(state.searchQuery);
+}
+
+function compareRecipes(a, b) {
+  if (state.sort === "most-made") {
+    const starDifference = getStarCount(b) - getStarCount(a);
+    if (starDifference !== 0) return starDifference;
+  }
+  return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+}
+
+function getStarCount(recipe) {
+  return recipe.stars && typeof recipe.stars === "object" ? Object.keys(recipe.stars).length : 0;
+}
+
+function getRecipeCategory(recipe) {
+  const allowed = ["main", "sweet", "drink", "snack", "other"];
+  if (allowed.includes(recipe.category)) return recipe.category;
+  const text = [recipe.title, ...(Array.isArray(recipe.ingredients) ? recipe.ingredients : [])]
+    .filter(Boolean).join(" ").toLowerCase();
+  if (/\bpancakes?\b/.test(text)) {
+    return /sugar|honey|syrup|chocolate|vanilla|sweet/.test(text) ? "sweet" : "main";
+  }
+  if (/pudding|\bcake\b|cookies?|brownie|dessert|custard|ice cream|tart|\bpie\b|sweet/.test(text)) return "sweet";
+  if (/coffee|tea|juice|smoothie|latte|lemonade|cocktail|drink/.test(text)) return "drink";
+  if (/snack|toast|cracker|chips|bites|dip/.test(text)) return "snack";
+  return "main";
 }
 
 function createRecipeCard(recipe, index) {
@@ -319,7 +479,9 @@ function renderStars(zone, recipe) {
     sticker.style.setProperty("--star-fill", star.fill || "#edb82f");
     sticker.style.setProperty("--star-edge", star.edge || "#89632c");
     sticker.style.setProperty("--star-turn", `${Number(star.rotation) || 0}deg`);
-    sticker.title = ownerId === state.personId ? "Your star" : "A reader tried and liked this recipe";
+    sticker.title = ownerId === state.personId
+      ? "Your star"
+      : `${star.author || "A reader"} tried and liked this recipe`;
     zone.appendChild(sticker);
   });
 }
@@ -370,7 +532,7 @@ function beginStarPlacement(event, recipe, zone) {
 }
 
 async function saveStar(recipe, starData) {
-  const savedStar = { ...starData, updatedAt: Date.now() };
+  const savedStar = { ...starData, author: getSavedAuthor() || "A reader", updatedAt: Date.now() };
 
   if (state.mode === "firebase" && state.recipesRef && state.firebase) {
     const starRef = state.firebase.child(state.recipesRef, `${recipe.id}/stars/${state.personId}`);
@@ -386,8 +548,12 @@ async function saveStar(recipe, starData) {
 }
 
 function openRecipe(recipe) {
+  state.activeRecipeId = recipe.id;
   detailMeta.textContent = `Shared by ${recipe.author} · ${formatDate(recipe.createdAt)}`;
   detailTitle.textContent = recipe.title;
+  const story = typeof recipe.story === "string" ? recipe.story.trim() : "";
+  detailStorySection.hidden = !story;
+  detailStory.textContent = story;
   detailIngredients.innerHTML = "";
   (recipe.ingredients || []).forEach(ingredient => {
     const item = document.createElement("li");
@@ -395,12 +561,32 @@ function openRecipe(recipe) {
     detailIngredients.appendChild(item);
   });
   detailInstructions.textContent = recipe.instructions;
+  ownerActions.hidden = !(recipe.ownerId && recipe.ownerId === state.personId);
   detailDish.className = `dish-frame large-dish ${normalizeDishType(recipe.dishType)}`;
   detailImage.src = recipe.imageUrl;
   detailImage.alt = `${recipe.title} illustration`;
   applyRandomDetailBackdrop();
   detailDialog.showModal();
   recipeCopy.scrollTop = 0;
+}
+
+async function deleteActiveRecipe() {
+  const recipe = state.recipes.find(item => item.id === state.activeRecipeId);
+  if (!recipe || recipe.ownerId !== state.personId) return;
+  const shouldDelete = window.confirm(`Remove “${recipe.title}” from the shared shelf? This cannot be undone.`);
+  if (!shouldDelete) return;
+
+  if (state.mode === "firebase" && state.recipesRef && state.firebase) {
+    const recipeRef = state.firebase.child(state.recipesRef, recipe.id);
+    await state.firebase.remove(recipeRef);
+  } else {
+    state.recipes = state.recipes.filter(item => item.id !== recipe.id);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state.recipes));
+    renderShelf();
+  }
+
+  state.activeRecipeId = null;
+  detailDialog.close();
 }
 
 function applyRandomDetailBackdrop() {
@@ -429,6 +615,10 @@ function readLocalRecipes() {
   } catch {
     return [];
   }
+}
+
+function getSavedAuthor() {
+  return (localStorage.getItem(AUTHOR_STORAGE_KEY) || "").trim();
 }
 
 function splitLines(value) {
