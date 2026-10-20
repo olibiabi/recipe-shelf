@@ -942,8 +942,8 @@ function createSimulatedRecipes() {
       category,
       instructions,
       dishType: dishTypes[index % dishTypes.length],
-      imageUrl: createFallbackFood(title, ingredients),
-      imageSource: "simulated",
+      imageUrl: `assets/simulated/simulated-${String(index + 1).padStart(2, "0")}.jpg`,
+      imageSource: "ai-simulated",
       createdAt: Date.now() - (index + 1) * 86400000,
       stars: { ...createSimulatedStars(index, names), ...(savedRatings[id] || {}) },
       isSimulated: true
