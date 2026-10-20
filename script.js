@@ -1,8 +1,10 @@
 const PROXY_URL = "https://itp-ima-replicate-proxy.web.app/api/create_n_get";
 const IMAGE_MODEL = "google/nano-banana-2";
+const EMBEDDING_VERSION = "beautyyuyanli/multilingual-e5-large:a06276a89f1a902d5fc225a9ca32b6e8e6292b7f3b136518878da97c458e2bad";
 const LOCAL_STORAGE_KEY = "recipe-shelf-recipes-v1";
 const AUTHOR_STORAGE_KEY = "recipe-shelf-author";
 const USER_STORAGE_KEY = "recipe-shelf-person-id";
+const SIMULATED_RATINGS_STORAGE_KEY = "recipe-shelf-simulated-ratings-v1";
 const ROW_SIZE = 4;
 const INITIAL_VISIBLE_ROWS = 3;
 const firebaseConfig = window.recipeShelfFirebaseConfig || {};
@@ -38,7 +40,10 @@ const state = {
   category: "all",
   sort: "newest",
   visibleRows: INITIAL_VISIBLE_ROWS,
-  isSaving: false
+  isSaving: false,
+  simulatedRecipes: createSimulatedRecipes(),
+  memoryMatches: [],
+  returnToMemory: false
 };
 
 const shelfList = document.getElementById("shelf-list");
@@ -77,6 +82,16 @@ const detailIngredients = document.getElementById("detail-ingredients");
 const detailInstructions = document.getElementById("detail-instructions");
 const ownerActions = document.getElementById("owner-actions");
 const deleteRecipeButton = document.getElementById("delete-recipe");
+const openMemoryMapButton = document.getElementById("open-memory-map");
+const memoryDialog = document.getElementById("memory-map-dialog");
+const memorySearchForm = document.getElementById("memory-search-form");
+const memoryQuery = document.getElementById("memory-query");
+const memoryStatus = document.getElementById("memory-status");
+const memoryResults = document.getElementById("memory-results");
+const memoryNodes = document.getElementById("memory-nodes");
+const memoryLines = document.getElementById("memory-lines");
+const closestMemoryList = document.getElementById("closest-memory-list");
+const findMemoryConnectionsButton = document.getElementById("find-memory-connections");
 const recipeCopy = document.querySelector(".recipe-copy");
 const detailArt = document.querySelector(".detail-art");
 const detailDish = document.getElementById("detail-dish");
@@ -101,9 +116,12 @@ function bindEvents() {
   recipeSort.addEventListener("change", updateSort);
   loadMoreButton.addEventListener("click", loadMoreRecipes);
   ratingButton.addEventListener("click", requestRatingMode);
+  openMemoryMapButton.addEventListener("click", openMemoryMap);
+  memorySearchForm.addEventListener("submit", findMemoryConnections);
   document.querySelector("[data-close-identity]").addEventListener("click", closeIdentityDialog);
   document.querySelector("[data-close-form]").addEventListener("click", () => formDialog.close());
-  document.querySelector("[data-close-detail]").addEventListener("click", () => detailDialog.close());
+  document.querySelector("[data-close-detail]").addEventListener("click", closeRecipeDetail);
+  document.querySelector("[data-close-memory]").addEventListener("click", () => memoryDialog.close());
   deleteRecipeButton.addEventListener("click", deleteActiveRecipe);
   form.addEventListener("submit", handleSubmit);
   detailArt.addEventListener("wheel", event => {
@@ -112,10 +130,11 @@ function bindEvents() {
     recipeCopy.scrollTop += event.deltaY;
   }, { passive: false });
 
-  for (const dialog of [identityDialog, formDialog, detailDialog]) {
+  for (const dialog of [identityDialog, formDialog, detailDialog, memoryDialog]) {
     dialog.addEventListener("click", event => {
       if (event.target !== dialog) return;
       if (dialog === identityDialog) closeIdentityDialog();
+      else if (dialog === detailDialog) closeRecipeDetail();
       else dialog.close();
     });
   }
@@ -345,7 +364,7 @@ Background: one plain, uninterrupted warm cream color close to #eee5d3, with no 
     return { url: durableImage, source: "ai" };
   } catch (error) {
     console.warn("Using illustrated fallback", error);
-    return { url: createFallbackFood(title), source: "fallback" };
+    return { url: createFallbackFood(title, ingredients), source: "fallback" };
   }
 }
 
@@ -366,37 +385,64 @@ async function compressRemoteImage(url) {
   return canvas.toDataURL("image/jpeg", .82);
 }
 
-function createFallbackFood(title) {
-  const safeTitle = escapeXml(title.slice(0, 24));
-  const colors = ["#ef5a42", "#efbd32", "#4a8e59", "#e7649c", "#2f76a8"];
-  const pieces = Array.from({ length: 13 }, (_, index) => {
-    const angle = (index / 13) * Math.PI * 2;
-    const radius = 34 + (index % 3) * 13;
+function createFallbackFood(title, ingredients = []) {
+  const seedText = `${title}|${ingredients.join("|")}`;
+  const seed = Array.from(seedText).reduce((total, character) => ((total * 31) + character.charCodeAt(0)) >>> 0, 2166136261);
+  const palettes = [
+    ["#d95b43", "#efbd32", "#6e9356", "#e8a0af", "#ead8a8"],
+    ["#7c3f36", "#e57b45", "#d9ad43", "#789662", "#f0d8b5"],
+    ["#bd596f", "#ee9e4d", "#6d8d63", "#856592", "#ead7bb"],
+    ["#c45a3c", "#d8a736", "#5e8c70", "#7692a5", "#edc99d"]
+  ];
+  const colors = palettes[seed % palettes.length];
+  const form = seed % 4;
+  const pieceCount = 7 + (seed % 8);
+  const pieces = Array.from({ length: pieceCount }, (_, index) => {
+    const value = (seed + index * 2654435761) >>> 0;
+    const angle = ((index / pieceCount) * Math.PI * 2) + ((value % 23) / 31);
+    const radius = 21 + (value % 46);
     const x = 150 + Math.cos(angle) * radius;
-    const y = 145 + Math.sin(angle) * radius * .62;
-    const color = colors[index % colors.length];
-    return `<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${19 + index % 9}" ry="${12 + index % 7}" fill="${color}" stroke="#22251f" stroke-width="3" transform="rotate(${index * 17} ${x} ${y})"/>`;
+    const y = 149 + Math.sin(angle) * radius * .58;
+    const rx = 12 + (value % 18);
+    const ry = 8 + ((value >>> 5) % 16);
+    const color = colors[(value >>> 9) % colors.length];
+    if ((index + form) % 3 === 0) {
+      return `<path d="M${(x-rx).toFixed(1)} ${y.toFixed(1)}q${rx.toFixed(1)} ${(-ry*1.7).toFixed(1)} ${(rx*2).toFixed(1)} 0q${(-rx*.2).toFixed(1)} ${(ry*1.9).toFixed(1)} ${(-rx*2).toFixed(1)} 0Z" fill="${color}" stroke="#34342e" stroke-width="2.6"/>`;
+    }
+    return `<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="${rx}" ry="${ry}" fill="${color}" stroke="#34342e" stroke-width="2.6" transform="rotate(${value % 65 - 32} ${x.toFixed(1)} ${y.toFixed(1)})"/>`;
   }).join("");
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#eee5d3"/><path d="M67 159c28-59 139-68 174 3-30 57-148 58-174-3Z" fill="#f5dfb3" stroke="#22251f" stroke-width="4"/>${pieces}<text x="150" y="260" text-anchor="middle" font-family="serif" font-size="17" fill="#22251f">${safeTitle}</text></svg>`;
+  const bases = [
+    `<path d="M66 160c30-58 139-65 170 2-29 54-142 59-170-2Z" fill="#ead8b4" stroke="#34342e" stroke-width="4"/>`,
+    `<path d="M83 124c22-25 112-27 136 2l-13 76c-31 20-86 20-113-2Z" fill="#e7d4ad" stroke="#34342e" stroke-width="4"/>`,
+    `<path d="M89 187c12-70 107-91 126-8-23 38-99 47-126 8Z" fill="#e8cfa2" stroke="#34342e" stroke-width="4"/>`,
+    `<path d="M77 148q72-54 146 0l-18 57q-55 24-111-1Z" fill="#eddfbd" stroke="#34342e" stroke-width="4"/>`
+  ];
+  const garnish = `<path d="M145 98q9-25 25-31q-4 20-20 35M151 99q-13-21-30-22q8 19 26 26" fill="none" stroke="#64824f" stroke-width="6" stroke-linecap="round"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#eee5d3"/><g transform="rotate(${(seed % 7) - 3} 150 150)">${bases[form]}${form % 2 ? garnish : ""}${pieces}</g><g opacity=".18" fill="#34342e">${Array.from({ length: 28 }, (_, index) => `<circle cx="${28 + ((seed + index * 47) % 244)}" cy="${31 + ((seed + index * 71) % 226)}" r="${.7 + (index % 2) * .45}"/>`).join("")}</g></svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 function renderShelf() {
-  const recipes = state.recipes
+  const sourceRecipes = getAllRecipes();
+  const recipes = sourceRecipes
     .filter(recipeMatchesCurrentView)
     .sort(compareRecipes);
   const visibleLimit = state.visibleRows * ROW_SIZE;
   const visibleRecipes = recipes.slice(0, visibleLimit);
   shelfList.innerHTML = "";
   emptyState.classList.toggle("hidden", recipes.length > 0);
-  emptyMessage.textContent = state.recipes.length === 0
+  emptyMessage.textContent = sourceRecipes.length === 0
     ? "The shelf is waiting for its first recipe."
     : "No recipes match this little note yet.";
   recipeCount.textContent = recipes.length === 0
     ? ""
     : `Showing ${visibleRecipes.length} of ${recipes.length} ${recipes.length === 1 ? "recipe" : "recipes"}`;
-  loadMoreButton.classList.toggle("hidden", recipes.length <= visibleLimit);
+  const remainingRecipeCount = Math.max(0, recipes.length - visibleRecipes.length);
+  const nextRecipeCount = Math.min(ROW_SIZE * 2, remainingRecipeCount);
+  loadMoreButton.classList.toggle("hidden", remainingRecipeCount === 0);
+  loadMoreButton.textContent = remainingRecipeCount === 1
+    ? "Show the last recipe"
+    : `Show ${nextRecipeCount} more recipes`;
 
   const rowCount = Math.max(3, Math.ceil(visibleRecipes.length / ROW_SIZE));
   for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
@@ -457,12 +503,16 @@ function createRecipeCard(recipe, index) {
   const image = card.querySelector(".recipe-image");
   const ratingZone = card.querySelector(".rating-zone");
 
+  card.classList.toggle("simulated-recipe", Boolean(recipe.isSimulated));
+
   dish.classList.add(normalizeDishType(recipe.dishType));
   dish.style.setProperty("--tilt", `${((index % 5) - 2) * .8}deg`);
   image.src = recipe.imageUrl;
   image.alt = `${recipe.title} illustration`;
   card.querySelector(".recipe-title").textContent = recipe.title;
-  card.querySelector(".recipe-byline").textContent = `by ${recipe.author} · ${formatDate(recipe.createdAt)}`;
+  card.querySelector(".recipe-byline").textContent = recipe.isSimulated
+    ? `by ${recipe.author} · simulated cook`
+    : `by ${recipe.author} · ${formatDate(recipe.createdAt)}`;
   openButton.addEventListener("click", () => openRecipe(recipe));
   renderStars(ratingZone, recipe);
   ratingZone.addEventListener("pointerdown", event => beginStarPlacement(event, recipe, ratingZone));
@@ -534,6 +584,15 @@ function beginStarPlacement(event, recipe, zone) {
 async function saveStar(recipe, starData) {
   const savedStar = { ...starData, author: getSavedAuthor() || "A reader", updatedAt: Date.now() };
 
+  if (recipe.isSimulated) {
+    const target = state.simulatedRecipes.find(item => item.id === recipe.id);
+    if (!target) return;
+    target.stars = { ...(target.stars || {}), [state.personId]: savedStar };
+    saveSimulatedRating(recipe.id, state.personId, savedStar);
+    renderShelf();
+    return;
+  }
+
   if (state.mode === "firebase" && state.recipesRef && state.firebase) {
     const starRef = state.firebase.child(state.recipesRef, `${recipe.id}/stars/${state.personId}`);
     await state.firebase.set(starRef, savedStar);
@@ -547,9 +606,12 @@ async function saveStar(recipe, starData) {
   renderShelf();
 }
 
-function openRecipe(recipe) {
+function openRecipe(recipe, options = {}) {
+  state.returnToMemory = Boolean(options.fromMemory);
   state.activeRecipeId = recipe.id;
-  detailMeta.textContent = `Shared by ${recipe.author} · ${formatDate(recipe.createdAt)}`;
+  detailMeta.textContent = recipe.isSimulated
+    ? `Simulated classroom recipe by ${recipe.author} · not a real person`
+    : `Shared by ${recipe.author} · ${formatDate(recipe.createdAt)}`;
   detailTitle.textContent = recipe.title;
   const story = typeof recipe.story === "string" ? recipe.story.trim() : "";
   detailStorySection.hidden = !story;
@@ -561,13 +623,20 @@ function openRecipe(recipe) {
     detailIngredients.appendChild(item);
   });
   detailInstructions.textContent = recipe.instructions;
-  ownerActions.hidden = !(recipe.ownerId && recipe.ownerId === state.personId);
+  ownerActions.hidden = Boolean(recipe.isSimulated) || !(recipe.ownerId && recipe.ownerId === state.personId);
   detailDish.className = `dish-frame large-dish ${normalizeDishType(recipe.dishType)}`;
   detailImage.src = recipe.imageUrl;
   detailImage.alt = `${recipe.title} illustration`;
   applyRandomDetailBackdrop();
   detailDialog.showModal();
   recipeCopy.scrollTop = 0;
+}
+
+function closeRecipeDetail() {
+  detailDialog.close();
+  if (!state.returnToMemory) return;
+  state.returnToMemory = false;
+  memoryDialog.showModal();
 }
 
 async function deleteActiveRecipe() {
@@ -598,6 +667,322 @@ function applyRandomDetailBackdrop() {
   detailArt.style.setProperty("--backdrop-base", palette.base);
   detailArt.style.setProperty("--backdrop-mark", palette.mark);
   detailArt.style.setProperty("--backdrop-grain", palette.grain);
+}
+
+function openMemoryMap() {
+  memoryDialog.showModal();
+  window.setTimeout(() => memoryQuery.focus(), 80);
+}
+
+async function findMemoryConnections(event) {
+  event.preventDefault();
+  const query = memoryQuery.value.trim();
+  const recipes = getAllRecipes();
+  if (!query || recipes.length === 0) return;
+
+  findMemoryConnectionsButton.disabled = true;
+  findMemoryConnectionsButton.textContent = "Finding connections…";
+  memoryStatus.textContent = "Placing this memory inside the model’s meaning space…";
+
+  const recipeTexts = recipes.map(recipeToEmbeddingText);
+  let vectors;
+  let usedModel = true;
+
+  try {
+    vectors = await requestEmbeddings([
+      `query: ${query}`,
+      ...recipeTexts.map(text => `passage: ${text}`)
+    ]);
+  } catch (error) {
+    console.warn("Embedding service unavailable; using local similarity", error);
+    usedModel = false;
+    vectors = [query, ...recipeTexts].map(buildFallbackEmbedding);
+  }
+
+  const queryVector = vectors[0];
+  state.memoryMatches = recipes.map((recipe, index) => ({
+    recipe,
+    score: cosineSimilarity(queryVector, vectors[index + 1])
+  })).sort((a, b) => b.score - a.score);
+
+  renderMemoryConnections(query, state.memoryMatches);
+  memoryResults.classList.remove("hidden");
+  memoryStatus.textContent = usedModel
+    ? "The map uses a multilingual AI embedding. Recipes with closer meanings sit nearer your memory."
+    : "The school embedding service was unavailable, so this preview uses local word relationships instead.";
+  findMemoryConnectionsButton.disabled = false;
+  findMemoryConnectionsButton.textContent = "Find nearby memories";
+  memoryResults.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function requestEmbeddings(texts) {
+  const response = await fetch(PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      version: EMBEDDING_VERSION,
+      input: {
+        texts: JSON.stringify(texts),
+        batch_size: 32,
+        normalize_embeddings: true
+      }
+    })
+  });
+
+  if (!response.ok) throw new Error(`Embedding request failed with ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  const output = data.output ?? data;
+  const vectors = Array.isArray(output?.embeddings) ? output.embeddings : output;
+  const isValid = Array.isArray(vectors)
+    && vectors.length === texts.length
+    && vectors.every(vector => Array.isArray(vector) && vector.length > 0 && vector.every(Number.isFinite));
+  if (!isValid) throw new Error("The embedding model returned an unexpected result");
+  return vectors;
+}
+
+function recipeToEmbeddingText(recipe) {
+  return [
+    recipe.title,
+    recipe.story,
+    Array.isArray(recipe.ingredients) ? recipe.ingredients.join(", ") : "",
+    recipe.instructions,
+    `category: ${getRecipeCategory(recipe)}`
+  ].filter(Boolean).join(". ").slice(0, 1600);
+}
+
+function cosineSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
+  let dot = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    dot += a[index] * b[index];
+    magnitudeA += a[index] ** 2;
+    magnitudeB += b[index] ** 2;
+  }
+  const denominator = Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB);
+  return denominator ? dot / denominator : 0;
+}
+
+function buildFallbackEmbedding(text) {
+  const dimensions = 96;
+  const vector = new Array(dimensions).fill(0);
+  const normalized = String(text).toLowerCase().normalize("NFKD");
+  const semanticGroups = [
+    ["grandmother", "grandma", "family", "mother", "father", "外婆", "奶奶", "家人", "妈妈", "爸爸"],
+    ["childhood", "memory", "home", "grew up", "小时候", "回忆", "家乡", "家里"],
+    ["warm", "comfort", "rain", "winter", "cozy", "温暖", "下雨", "冬天", "安慰"],
+    ["summer", "garden", "fresh", "picnic", "夏天", "花园", "清新", "野餐"],
+    ["sweet", "sugar", "cake", "dessert", "honey", "甜", "糖", "蛋糕", "甜点"],
+    ["savory", "salty", "spicy", "garlic", "咸", "辣", "大蒜", "香"],
+    ["celebration", "birthday", "holiday", "festival", "庆祝", "生日", "节日", "春节"],
+    ["quick", "simple", "after school", "midnight", "简单", "放学", "夜宵", "快速"],
+    ["soup", "stew", "broth", "noodle", "汤", "炖", "面"],
+    ["bread", "pancake", "flour", "baked", "面包", "煎饼", "面粉", "烤"],
+    ["fruit", "lemon", "apple", "berry", "水果", "柠檬", "苹果", "莓"],
+    ["rice", "dumpling", "porridge", "米饭", "饺子", "粥"]
+  ];
+
+  semanticGroups.forEach((words, index) => {
+    words.forEach(word => {
+      if (normalized.includes(word)) vector[index] += 2.4;
+    });
+  });
+
+  const latinTokens = normalized.match(/[a-z0-9]+/g) || [];
+  const chinese = normalized.match(/[\u3400-\u9fff]/g) || [];
+  const tokens = [...latinTokens, ...chinese, ...chinese.slice(0, -1).map((character, index) => character + chinese[index + 1])];
+  tokens.forEach(token => {
+    let hash = 2166136261;
+    for (const character of token) {
+      hash ^= character.codePointAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    vector[12 + (Math.abs(hash) % (dimensions - 12))] += 1;
+  });
+
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value ** 2, 0)) || 1;
+  return vector.map(value => value / magnitude);
+}
+
+function renderMemoryConnections(query, matches) {
+  const compactMap = window.matchMedia("(max-width: 540px)").matches;
+  const visibleMatches = matches.slice(0, compactMap ? 6 : 8);
+  memoryNodes.innerHTML = "";
+  memoryLines.innerHTML = "";
+  closestMemoryList.innerHTML = "";
+
+  const scores = visibleMatches.map(match => match.score);
+  const highest = Math.max(...scores);
+  const lowest = Math.min(...scores);
+  const spread = Math.max(.0001, highest - lowest);
+
+  visibleMatches.forEach((match, index) => {
+    const measuredCloseness = (match.score - lowest) / spread;
+    const rankCloseness = visibleMatches.length === 1 ? 1 : 1 - index / (visibleMatches.length - 1);
+    const closeness = Math.pow(measuredCloseness * .72 + rankCloseness * .28, 1.55);
+    const angle = (-Math.PI / 2) + (index / Math.max(1, visibleMatches.length)) * Math.PI * 2;
+    const radius = (compactMap ? 30 : 18) + (1 - closeness) * (compactMap ? 17 : 28);
+    const x = clamp(50 + Math.cos(angle) * radius, 11, 89);
+    const y = clamp(50 + Math.sin(angle) * radius * (compactMap ? .7 : .82), 12, 88);
+
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const bendX = 500 + (x * 10 - 500) * .48 + ((index % 2 ? 1 : -1) * 24);
+    const bendY = 280 + (y * 5.6 - 280) * .48;
+    line.setAttribute("d", `M 500 280 Q ${bendX.toFixed(1)} ${bendY.toFixed(1)} ${(x * 10).toFixed(1)} ${(y * 5.6).toFixed(1)}`);
+    line.style.setProperty("--connection-strength", String(.18 + closeness * .76));
+    line.style.setProperty("--connection-width", String(.9 + closeness * 3.4));
+    memoryLines.appendChild(line);
+
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = `memory-node${match.recipe.isSimulated ? " is-simulated" : ""}${index === 0 ? " is-strongest" : ""}`;
+    node.style.left = `${x}%`;
+    node.style.top = `${y}%`;
+    node.style.setProperty("--node-turn", `${((index % 5) - 2) * 1.2}deg`);
+    node.style.setProperty("--node-scale", String(.86 + closeness * .18));
+    node.innerHTML = `<img alt=""><span></span><small></small>`;
+    node.querySelector("img").src = match.recipe.imageUrl;
+    node.querySelector("img").alt = `${match.recipe.title} illustration`;
+    node.querySelector("span").textContent = match.recipe.title;
+    node.querySelector("small").textContent = match.recipe.isSimulated ? "simulated cook" : `by ${match.recipe.author}`;
+    node.title = `${Math.round(match.score * 1000) / 10}% cosine similarity · ${connectionLabel(closeness, index)}`;
+    node.setAttribute("aria-label", `${match.recipe.title}, ${connectionLabel(closeness, index)} to your memory`);
+    node.addEventListener("click", () => {
+      memoryDialog.close();
+      openRecipe(match.recipe, { fromMemory: true });
+    });
+    memoryNodes.appendChild(node);
+  });
+
+  matches.slice(0, 3).forEach((match, index) => {
+    const measuredCloseness = (match.score - lowest) / spread;
+    const rankCloseness = visibleMatches.length === 1 ? 1 : 1 - index / (visibleMatches.length - 1);
+    const closeness = Math.pow(measuredCloseness * .72 + rankCloseness * .28, 1.55);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "closest-memory-card";
+    button.innerHTML = `<span class="closest-number"></span><span class="closest-copy"><strong></strong><small></small></span><span class="closest-score"></span>`;
+    button.querySelector(".closest-number").textContent = String(index + 1).padStart(2, "0");
+    button.querySelector("strong").textContent = match.recipe.title;
+    button.querySelector("small").textContent = match.recipe.isSimulated
+      ? `${match.recipe.author} · simulated cook`
+      : `${match.recipe.author} · ${shortStory(match.recipe.story)}`;
+    button.style.setProperty("--match-strength", `${Math.round((.2 + closeness * .8) * 100)}%`);
+    button.title = `${Math.round(match.score * 1000) / 10}% cosine similarity`;
+    button.querySelector(".closest-score").textContent = connectionLabel(closeness, index);
+    button.addEventListener("click", () => {
+      memoryDialog.close();
+      openRecipe(match.recipe, { fromMemory: true });
+    });
+    closestMemoryList.appendChild(button);
+  });
+
+  const youLabel = document.querySelector(".memory-you span");
+  youLabel.title = query;
+}
+
+function connectionLabel(closeness, index) {
+  if (index === 0) return "Strongest link";
+  if (closeness >= .68) return "Very close";
+  if (closeness >= .38) return "Connected";
+  return "Faint link";
+}
+
+function shortStory(story) {
+  const value = String(story || "A recipe waiting for a shared memory").trim();
+  return value.length > 64 ? `${value.slice(0, 61)}…` : value;
+}
+
+function getAllRecipes() {
+  return [...state.recipes, ...state.simulatedRecipes];
+}
+
+function createSimulatedRecipes() {
+  const examples = [
+    ["Mina", "Rainy Day Miso Soup", "My father made this quiet soup whenever the windows fogged up after school.", ["miso", "tofu", "seaweed", "scallions"], "main", "Warm water and dissolve in the miso. Add tofu and seaweed, simmer gently for five minutes, then finish with scallions."],
+    ["Theo", "Sunday Lemon Cake", "The bright lemon smell meant cousins were about to arrive for Sunday lunch.", ["lemon", "flour", "eggs", "sugar"], "sweet", "Whisk eggs and sugar, fold in flour, lemon zest and juice, then bake until golden and springy."],
+    ["Asha", "Cardamom Milk Tea", "A small cup shared with my mother while the rest of the house was still asleep.", ["black tea", "milk", "cardamom", "ginger"], "drink", "Simmer crushed cardamom and ginger in water, steep the tea, add milk and strain into small cups."],
+    ["Jun", "Midnight Tomato Noodles", "The first meal I learned to cook alone in my college apartment.", ["noodles", "tomato", "garlic", "chili"], "main", "Cook the noodles. Sizzle garlic and chili, soften the tomatoes into a sauce, then toss everything together."],
+    ["Rosa", "Garden Peach Toast", "We ate ripe peaches over the sink during the hottest week of summer.", ["bread", "peach", "honey", "ricotta"], "snack", "Toast the bread, spread with ricotta, layer over sliced peaches and finish with a little honey."],
+    ["Nico", "Snow Day Dumplings", "Everyone crowded around the table folding imperfect dumplings while snow covered the street.", ["flour", "cabbage", "mushroom", "soy sauce"], "main", "Mix chopped cabbage and mushrooms with soy sauce, seal spoonfuls in wrappers, then steam or pan-fry."],
+    ["Layla", "Birthday Rice Pudding", "The cinnamon pattern on top changed every birthday, but the recipe never did.", ["rice", "milk", "cinnamon", "sugar"], "sweet", "Slowly simmer rice with milk and sugar until creamy. Chill or serve warm with cinnamon on top."],
+    ["Sam", "After-School Corn Cakes", "Crisp edges and salty butter made the walk home feel worth it.", ["corn", "flour", "salt", "butter"], "snack", "Stir corn, flour, salt and water into a thick batter, then fry small cakes in butter until crisp."],
+    ["Inez", "Green Market Pasta", "This tastes like carrying an overfilled market bag through warm city streets.", ["pasta", "basil", "peas", "olive oil"], "main", "Boil the pasta and peas, then toss with torn basil, olive oil and a splash of pasta water."],
+    ["Bo", "Grandpa’s Scallion Pancakes", "He never measured anything and always gave the crispiest piece to the youngest person.", ["flour", "scallions", "salt", "sesame oil"], "main", "Make a soft dough, roll it with sesame oil and scallions, coil it, flatten it and pan-fry both sides."],
+    ["Emi", "First-Summer Strawberry Ice", "We crushed berries and ice after swimming until our hands turned pink.", ["strawberry", "ice", "lemon", "sugar"], "sweet", "Blend strawberries with lemon and sugar, freeze until firm, then scrape into soft crystals."],
+    ["Amir", "Friday Lentil Stew", "The pot stayed on the stove for anyone who arrived late from work.", ["lentils", "tomato", "cumin", "onion"], "main", "Brown the onion with cumin, add tomato and lentils, cover with water and simmer until tender."],
+    ["Clara", "Library Hot Chocolate", "A thermos of chocolate made winter study sessions feel less lonely.", ["cocoa", "milk", "dark chocolate", "salt"], "drink", "Warm milk with cocoa and a pinch of salt, whisk in dark chocolate and pour into a thermos."],
+    ["Noah", "Campfire Apple Toast", "Smoke, apples and too much cinnamon from our first camping trip.", ["apple", "bread", "cinnamon", "butter"], "snack", "Cook apple slices in butter and cinnamon until soft, then spoon them over fire-toasted bread."],
+    ["Sora", "New Year Rice Cake Soup", "Each bowl marked another year and another seat added to the family table.", ["rice cakes", "broth", "egg", "scallions"], "main", "Simmer sliced rice cakes in broth until tender, ribbon in beaten egg and garnish with scallions."],
+    ["Mae", "Little Red Bean Buns", "My aunt wrapped these in paper for the long train ride back home.", ["flour", "red bean", "sugar", "yeast"], "sweet", "Let the dough rise, wrap it around sweet red bean paste and steam the buns until fluffy."],
+    ["Omar", "Rooftop Mint Lemonade", "We drank this under string lights when the apartment was too hot to sleep.", ["lemon", "mint", "water", "sugar"], "drink", "Muddle mint with sugar, add lemon juice and cold water, then serve over plenty of ice."],
+    ["Tess", "Autumn Pumpkin Soup", "The color reminds me of leaves stuck to wet boots by the kitchen door.", ["pumpkin", "onion", "broth", "nutmeg"], "main", "Roast the pumpkin, soften the onion, add broth and nutmeg, then blend until velvety."],
+    ["Kai", "Train Station Egg Sandwich", "A simple breakfast eaten before every early trip with my sister.", ["egg", "bread", "mayonnaise", "pepper"], "snack", "Mash boiled eggs with mayonnaise and pepper, spread thickly on soft bread and cut in half."],
+    ["Priya", "Festival Coconut Sweets", "We rolled them together while music and conversation filled every room.", ["coconut", "condensed milk", "cardamom", "pistachio"], "sweet", "Cook coconut with condensed milk and cardamom, cool slightly, roll into balls and coat with pistachio."],
+    ["Luca", "Window-Sill Herb Focaccia", "The first thing baked with herbs grown in our tiny apartment window.", ["flour", "rosemary", "olive oil", "salt"], "main", "Let the dough rise, press it into an oiled pan, dimple with rosemary and bake until deeply golden."],
+    ["Mei", "Cold Sesame Noodles", "My grandmother packed these for humid afternoons at the neighborhood pool.", ["noodles", "sesame", "cucumber", "vinegar"], "main", "Rinse cooked noodles cold, toss with sesame paste and vinegar, then top with cucumber."],
+    ["Ana", "Kitchen-Dance Mango Lassi", "The blender was so loud that we danced while waiting for it to stop.", ["mango", "yogurt", "milk", "cardamom"], "drink", "Blend ripe mango with yogurt, milk and cardamom until smooth, then serve very cold."],
+    ["Finn", "Quiet Morning Oat Porridge", "Steam rising from this bowl is my favorite part of slow winter mornings.", ["oats", "milk", "pear", "honey"], "main", "Simmer oats in milk until creamy, fold in diced pear and finish with honey."],
+    ["Yara", "Orange Blossom Semolina Cake", "The floral syrup reminds me of crowded spring lunches at my aunt’s house.", ["semolina", "orange blossom water", "yogurt", "almonds"], "sweet", "Mix semolina with yogurt, bake until golden, then soak the warm cake with orange blossom syrup and almonds."]
+  ];
+
+  const dishTypes = ["blue-bowl", "pink-plate", "green-bowl", "check-plate"];
+  const names = examples.map(example => example[0]);
+  const savedRatings = readSimulatedRatings();
+  return examples.map(([author, title, story, ingredients, category, instructions], index) => {
+    const id = `simulated-${index + 1}`;
+    return {
+      id,
+      author,
+      title,
+      story,
+      ingredients,
+      category,
+      instructions,
+      dishType: dishTypes[index % dishTypes.length],
+      imageUrl: createFallbackFood(title, ingredients),
+      imageSource: "simulated",
+      createdAt: Date.now() - (index + 1) * 86400000,
+      stars: { ...createSimulatedStars(index, names), ...(savedRatings[id] || {}) },
+      isSimulated: true
+    };
+  });
+}
+
+function createSimulatedStars(seed, names) {
+  const count = 1 + (seed * 3) % 7;
+  const stars = {};
+  for (let index = 0; index < count; index += 1) {
+    const palette = STAR_PALETTES[(seed + index) % STAR_PALETTES.length];
+    const simulatedName = names[(seed + index + 4) % names.length];
+    stars[`simulated-reader-${seed}-${index}`] = {
+      ...palette,
+      author: `${simulatedName} · simulated cook`,
+      x: 14 + ((seed * 17 + index * 23) % 72),
+      y: 10 + ((seed * 11 + index * 19) % 68),
+      rotation: ((seed + index) % 7) * 5 - 15,
+      updatedAt: Date.now(),
+      isSimulated: true
+    };
+  }
+  return stars;
+}
+
+function readSimulatedRatings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SIMULATED_RATINGS_STORAGE_KEY) || "{}");
+    return stored && typeof stored === "object" ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSimulatedRating(recipeId, personId, star) {
+  const ratings = readSimulatedRatings();
+  ratings[recipeId] = { ...(ratings[recipeId] || {}), [personId]: star };
+  localStorage.setItem(SIMULATED_RATINGS_STORAGE_KEY, JSON.stringify(ratings));
 }
 
 function setSaving(isSaving, message = "AI will paint the food for your chosen dish.") {
